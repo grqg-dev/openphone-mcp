@@ -1,0 +1,38 @@
+{
+  "name": "openphone-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for OpenPhone (Quo) — read SMS, list calls, send messages via the OpenPhone API",
+  "main": "dist/index.js",
+  "bin": {
+    "openphone-mcp": "dist/index.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "openphone",
+    "quo",
+    "sms",
+    "telephony",
+    "claude",
+    "model-context-protocol"
+  ],
+  "author": "Studio Corsair",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "typescript": "^5.7.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
+}
