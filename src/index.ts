@@ -4,7 +4,35 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-const API_BASE = "https://api.openphone.com/v1";
+const API_BASE =
+  process.env.QUO_API_BASE ?? process.env.OPENPHONE_API_BASE ?? "https://api.openphone.com/v1";
+
+const QUO_API_VERSION = "2026-03-30";
+
+function normalizeRecipients(to: string | string[]): string[] {
+  if (Array.isArray(to)) {
+    if (to.length < 1 || to.length > 10) {
+      throw new Error("to must contain 1-10 phone numbers");
+    }
+    return to;
+  }
+
+  const trimmed = to.trim();
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        if (parsed.length < 1 || parsed.length > 10) {
+          throw new Error("to must contain 1-10 phone numbers");
+        }
+        return parsed.map(String);
+      }
+    } catch {
+      // fall through to single recipient
+    }
+  }
+  return [to];
+}
 
 function getApiKey(): string {
   const key = process.env.OPENPHONE_API_KEY;
@@ -42,6 +70,7 @@ async function apiRequest(
     headers: {
       Authorization: getApiKey(),
       "Content-Type": "application/json",
+      "Quo-Api-Version": QUO_API_VERSION,
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
@@ -74,12 +103,33 @@ server.tool(
   }
 );
 
+const participantsQueryParam = z.preprocess(
+  (val) => {
+    if (typeof val === "string") {
+      const trimmed = val.trim();
+      if (trimmed.startsWith("[")) {
+        try {
+          const parsed: unknown = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) return parsed;
+        } catch {
+          // fall through
+        }
+      }
+      return [val];
+    }
+    return val;
+  },
+  z.array(z.string())
+);
+
 server.tool(
   "list_messages",
-  "List SMS messages for a phone number. Requires phoneNumberId and at least one participant number.",
+  "List SMS messages for a phone number. Requires phoneNumberId and at least one participant number (up to 10 for group threads).",
   {
     phoneNumberId: z.string().describe("OpenPhone number ID (format: PN...)"),
-    participants: z.array(z.string()).describe("Phone numbers in E.164 format (e.g., +15551234567)"),
+    participants: participantsQueryParam
+      .pipe(z.array(z.string()).min(1).max(10))
+      .describe("Phone numbers in E.164 format (e.g., +15551234567). 1-10 for group threads."),
     maxResults: z.number().min(1).max(100).default(20).describe("Max results per page (1-100)"),
     userId: z.string().optional().describe("Filter by sender user ID (format: US...)"),
     createdAfter: z.string().optional().describe("ISO 8601 timestamp — only messages after this time"),
@@ -91,8 +141,7 @@ server.tool(
       phoneNumberId,
       maxResults: String(maxResults),
     };
-    // participants needs to be sent as repeated query params
-    if (participants.length > 0) params["participants[]"] = participants;
+    if (participants.length > 0) params.participants = participants;
     if (userId) params.userId = userId;
     if (createdAfter) params.createdAfter = createdAfter;
     if (createdBefore) params.createdBefore = createdBefore;
@@ -117,16 +166,24 @@ server.tool(
 
 server.tool(
   "send_message",
-  "Send an SMS from an OpenPhone number. Costs ~$0.01/segment.",
+  "Send an SMS from an OpenPhone number. Supports 1:1 or group SMS (up to 10 recipients). Costs ~$0.01/segment.",
   {
-    from: z.string().describe("Sender: OpenPhone number ID (PN...) or E.164 phone number"),
-    to: z.string().describe("Recipient phone number in E.164 format (e.g., +15551234567)"),
+    from: z
+      .string()
+      .describe(
+        "Sender: OpenPhone number ID (PN...) or E.164 phone number. Practice default: PNMb6TbOHu."
+      ),
+    to: z
+      .union([z.string(), z.array(z.string()).min(1).max(10)])
+      .describe(
+        "Recipient phone number(s) in E.164 format. Single string for 1:1 (e.g., +15551234567) or array of 1-10 numbers for group SMS."
+      ),
     content: z.string().min(1).max(1600).describe("Message text (1-1600 characters)"),
     userId: z.string().optional().describe("User ID sending the message (format: US...)"),
     setInboxStatus: z.enum(["done"]).optional().describe("Set to 'done' to move conversation to Done inbox"),
   },
   async ({ from, to, content, userId, setInboxStatus }) => {
-    const body: Record<string, unknown> = { from, to: [to], content };
+    const body: Record<string, unknown> = { from, to: normalizeRecipients(to), content };
     if (userId) body.userId = userId;
     if (setInboxStatus) body.setInboxStatus = setInboxStatus;
 
@@ -139,7 +196,10 @@ server.tool(
   "list_conversations",
   "List conversation threads. Filter by phone numbers, user, or date range.",
   {
-    phoneNumbers: z.array(z.string()).optional().describe("Filter by phone number IDs or E.164 numbers (1-100)"),
+    phoneNumbers: participantsQueryParam
+      .pipe(z.array(z.string()).max(100))
+      .optional()
+      .describe("Filter by phone number IDs or E.164 numbers (1-100)"),
     userId: z.string().optional().describe("Filter by user ID (format: US...)"),
     createdAfter: z.string().optional().describe("ISO 8601 timestamp"),
     createdBefore: z.string().optional().describe("ISO 8601 timestamp"),
@@ -163,7 +223,7 @@ server.tool(
     const params: Record<string, string | string[] | undefined> = {
       maxResults: String(maxResults),
     };
-    if (phoneNumbers && phoneNumbers.length > 0) params["phoneNumbers[]"] = phoneNumbers;
+    if (phoneNumbers && phoneNumbers.length > 0) params.phoneNumbers = phoneNumbers;
     if (userId) params.userId = userId;
     if (createdAfter) params.createdAfter = createdAfter;
     if (createdBefore) params.createdBefore = createdBefore;
@@ -182,7 +242,9 @@ server.tool(
   "List call history for a phone number. Requires phoneNumberId and one participant.",
   {
     phoneNumberId: z.string().describe("OpenPhone number ID (format: PN...)"),
-    participants: z.array(z.string()).max(1).describe("One participant phone number in E.164 format"),
+    participants: participantsQueryParam
+      .pipe(z.array(z.string()).min(1).max(1))
+      .describe("One participant phone number in E.164 format"),
     maxResults: z.number().min(1).max(100).default(20).describe("Max results per page (1-100)"),
     userId: z.string().optional().describe("Filter by user ID (format: US...)"),
     createdAfter: z.string().optional().describe("ISO 8601 timestamp"),
@@ -194,7 +256,7 @@ server.tool(
       phoneNumberId,
       maxResults: String(maxResults),
     };
-    if (participants.length > 0) params["participants[]"] = participants;
+    if (participants.length > 0) params.participants = participants;
     if (userId) params.userId = userId;
     if (createdAfter) params.createdAfter = createdAfter;
     if (createdBefore) params.createdBefore = createdBefore;

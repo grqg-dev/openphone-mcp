@@ -9,7 +9,7 @@ MCP server for [OpenPhone](https://www.openphone.com) (now [Quo](https://www.quo
 | `get_phone_numbers` | List all phone numbers in your workspace |
 | `list_messages` | List SMS messages for a phone number (with date/direction filters) |
 | `get_message` | Get a specific message by ID |
-| `send_message` | Send an SMS from an OpenPhone number |
+| `send_message` | Send an SMS from an OpenPhone number (1:1 or group, up to 10 recipients) |
 | `list_conversations` | List conversation threads |
 | `list_calls` | List call history for a phone number |
 | `get_call` | Get details of a specific call |
@@ -80,15 +80,24 @@ Or if installed locally:
 **Send a text:**
 > "Send a text to +15551234567 from my OpenPhone number saying 'On my way'"
 
+**Send a group SMS:**
+> "Send a text to +15551234567 and +15559876543 from my OpenPhone number saying 'See you there'"
+
 **Check call history:**
 > "Show me my recent calls"
 
 ## API Details
 
-- **Base URL:** `https://api.openphone.com/v1`
+- **Base URL:** `https://api.openphone.com/v1` (override with `QUO_API_BASE` or `OPENPHONE_API_BASE`, e.g. `https://api.quo.com/v1`)
 - **Auth:** API key in `Authorization` header (no Bearer prefix)
+- **API version:** `Quo-Api-Version: 2026-03-30` (required for group SMS)
 - **Rate limit:** 10 requests/second per API key
 - **Docs:** [quo.com/docs/api-reference](https://www.quo.com/docs/api-reference/introduction)
+
+### Group SMS
+
+- `send_message.to` accepts a single E.164 string (1:1) or an array of 1–10 E.164 strings (group).
+- `list_messages.participants` is sent as repeated `participants` query params (not `participants[]`).
 
 ## License
 
